@@ -2,6 +2,8 @@ use std::{fmt, str::FromStr};
 
 use thiserror::Error;
 
+const TOP: u64 = 0b0000001_0000001_0000001_0000001_0000001_0000001_0000001;
+
 #[derive(Error, Debug, PartialEq)]
 pub enum MoveError {
     #[error("Column did not have available space.")]
@@ -124,47 +126,29 @@ impl ConnectFourBoard {
     }
 
     fn next_position(&self, column: Column) -> Result<u64, MoveError> {
-        let column_mask = 0b100000010000001000000100000010000001000000u64 >> (column.to_u64() - 1);
-        let free_positions = !(self.player_one_bitboard | self.player_two_bitboard) & column_mask;
-
-        match free_positions != 0 {
-            true => Ok(free_positions & (!free_positions + 1)),
-            false => Err(MoveError::FullColumn),
+        let offset = 7 * (column.to_u64() - 1);
+        let mut mask = 0b1000000_0000000_0000000_0000000_0000000_0000000_0000000u64 >> offset;
+        let board = !(self.player_one_bitboard | self.player_two_bitboard);
+        for _ in 0..6 {
+            if board & mask != 0 {
+                return Ok(mask);
+            }
+            mask >>= 1;
         }
+        Err(MoveError::FullColumn)
     }
 
     fn calculate_board_status(&self) -> BoardStatus {
-        if ConnectFourBoard::has_winner(self.player_one_bitboard) {
+        if has_winner(self.player_one_bitboard) {
             return BoardStatus::Winner(Player::One);
         }
-        if ConnectFourBoard::has_winner(self.player_two_bitboard) {
+        if has_winner(self.player_two_bitboard) {
             return BoardStatus::Winner(Player::Two);
         }
         if (self.player_one_bitboard | self.player_two_bitboard).count_ones() == 42 {
             return BoardStatus::Draw;
         }
         BoardStatus::OnGoing
-    }
-
-    fn has_winner(bitboard: u64) -> bool {
-        // TODO: Bug here. This current logic sometime produces the wrong results.
-        let edge_mask = 0b1111110_1111110_1111110_1111110_1111110_1111111;
-        let safe_board = bitboard & edge_mask;
-
-        let horizontal = safe_board & (safe_board >> 1) & (safe_board >> 2) & (safe_board >> 3);
-        let vertical = bitboard & (bitboard >> 7) & (bitboard >> 14) & (bitboard >> 21);
-        let diag_up = bitboard & (bitboard >> 6) & (bitboard >> 12) & (bitboard >> 18);
-        let diag_down = bitboard & (bitboard >> 8) & (bitboard >> 16) & (bitboard >> 24);
-
-        // Found at: https://stackoverflow.com/questions/7033165/algorithm-to-check-a-connect-four-field
-        // Will attempt to use this once the initial UI overhaul is complete.
-        // let y = bitboard & (bitboard >> 6);
-        // let horizontal = y & (y >> (2 * 7));
-        // let vertical = y & (y >> 2);
-        // let diag_down = y & (y >> (2 * 6));
-        // let diag_up = y & (y >> (2 * 8));
-
-        horizontal != 0 || vertical != 0 || diag_up != 0 || diag_down != 0
     }
 
     pub fn next_turn(&self) -> Player {
@@ -191,6 +175,19 @@ impl ConnectFourBoard {
     }
 }
 
+fn has_winner(bitboard: u64) -> bool {
+    let horizontal = bitboard & (bitboard >> 7);
+    let vertical = bitboard & (bitboard >> 1);
+    let diag_one = bitboard & (bitboard >> 6);
+    let diag_two = bitboard & (bitboard >> 8);
+    (diag_one & (diag_one >> (2 * 6)))
+        | (horizontal & (horizontal >> (2 * 7)))
+        | (diag_two & (diag_two >> (2 * 8)))
+        | (vertical & (vertical >> 2))
+        != 0
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Slot {
     Occupied(Player),
     Vacant,
@@ -204,7 +201,7 @@ pub struct BoardSlots<'a> {
 impl<'a> BoardSlots<'a> {
     pub fn new(board: &'a ConnectFourBoard) -> Self {
         Self {
-            cursor: 0b100000000000000000000000000000000000000000,
+            cursor: 0b1000000_0000000_0000000_0000000_0000000_0000000_0000000,
             board,
         }
     }
@@ -214,6 +211,10 @@ impl Iterator for BoardSlots<'_> {
     type Item = Slot;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor & TOP != 0 {
+            self.cursor >>= 1;
+        }
+
         match self.cursor {
             0 => None,
             _ => {
@@ -233,9 +234,9 @@ impl Iterator for BoardSlots<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::game::{BoardStatus, MoveError, Player};
+    use crate::game::{BoardStatus, MoveError, Player, Slot};
 
-    use super::{Column, ConnectFourBoard};
+    use super::{Column, ConnectFourBoard, has_winner};
 
     #[test]
     fn default_board() {
@@ -250,10 +251,10 @@ mod tests {
     #[test]
     fn places_new_pieces_in_correct_position() {
         let mut board = ConnectFourBoard::new();
-        for i in 0..5 {
+        for i in 0..6 {
             let next_pos = board.try_move(Column::One).unwrap();
             assert_eq!(
-                0b000000000000000000000000000000000001000000 << (7 * i),
+                0b1000000_0000000_0000000_0000000_0000000_0000000_0000000 >> i,
                 next_pos
             );
         }
@@ -262,7 +263,7 @@ mod tests {
     #[test]
     fn error_when_column_is_full() {
         let mut board = ConnectFourBoard {
-            player_one_bitboard: 0b100000010000001000000100000010000001000000,
+            player_one_bitboard: 0b1111110_0000000_0000000_0000000_0000000_0000000_0000000,
             ..Default::default()
         };
         assert_eq!(Err(MoveError::FullColumn), board.try_move(Column::One));
@@ -297,5 +298,85 @@ mod tests {
         let board = ConnectFourBoard::new();
         assert_eq!(Player::One, board.turn());
         assert_eq!(Player::Two, board.next_turn());
+    }
+
+    #[test]
+    fn determines_when_winner_exists() {
+        assert!(has_winner(
+            0b1111000_0000000_0000000_0000000_0000000_0000000_0000000
+        ));
+        assert!(has_winner(
+            0b1000000_1000000_1000000_1000000_0000000_0000000_0000000
+        ));
+        assert!(has_winner(
+            0b1000000_0100000_0010000_0001000_0000000_0000000_0000000
+        ));
+        assert!(has_winner(
+            0b0001000_0010000_0100000_1000000_0000000_0000000_0000000
+        ));
+    }
+
+    #[test]
+    fn determines_when_no_winner_exists() {
+        assert!(!has_winner(
+            0b1110000_0000000_0000000_0000000_0000000_0000000_0000000
+        ));
+    }
+
+    #[test]
+    fn reads_board_slots() {
+        let board = ConnectFourBoard {
+            player_one_bitboard: 0b1111110_0000000_0000010_0000000_0000010_0000000_0000010,
+            player_two_bitboard: 0b0000000_1111100_0000000_0000010_0000000_0000010_0000000,
+            ..Default::default()
+        };
+
+        let slots: Vec<_> = board.slots().collect();
+
+        let expected_slots = vec![
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::One),
+            Slot::Occupied(Player::Two),
+            Slot::Occupied(Player::Two),
+            Slot::Occupied(Player::Two),
+            Slot::Occupied(Player::Two),
+            Slot::Occupied(Player::Two),
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Occupied(Player::One),
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Occupied(Player::Two),
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Occupied(Player::One),
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Occupied(Player::Two),
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Vacant,
+            Slot::Occupied(Player::One),
+        ];
+        assert_eq!(expected_slots, slots);
     }
 }

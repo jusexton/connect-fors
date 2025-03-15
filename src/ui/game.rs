@@ -98,10 +98,10 @@ fn build_board_slots(board: &ConnectFourBoard) -> Vec<Circle> {
             Slot::Vacant => Color::White,
         };
 
-        let (row, col) = (idx / 7, idx % 7);
+        let (row, col) = (idx % 6, idx / 6);
         slots.push(Circle {
             x: (col as f64 * SLOT) + BOARD_PADDING,
-            y: (5.0 * 14.0) - (row as f64 * SLOT) + BOARD_PADDING,
+            y: (row as f64 * SLOT) + BOARD_PADDING,
             radius: SLOT_RADIUS,
             color,
         });

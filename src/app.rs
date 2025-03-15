@@ -44,7 +44,7 @@ impl App {
     fn handle_key_press(&mut self, key: Key) {
         match self.current_page {
             Page::Home => self.handle_home_key_press(key),
-            Page::SinglePlayer => self.handle_singeplayer_key_press(key),
+            Page::SinglePlayer => self.handle_singleplayer_key_press(key),
             Page::MultiPlayer => self.handle_multiplayer_key_press(key),
         }
     }
@@ -64,18 +64,16 @@ impl App {
         }
     }
 
-    fn handle_singeplayer_key_press(&mut self, key: Key) {
+    fn handle_singleplayer_key_press(&mut self, key: Key) {
         match key {
             Key::Char('q') => {
                 self.current_page = Page::Home;
             }
-            Key::Char(c) => {
-                if self.board().status() == BoardStatus::OnGoing {
-                    if let Ok(column) = Column::from_str(&c.to_string()) {
-                        if self.board.try_move(column).is_ok() {
-                            if let Some(mv) = ai::next_move(&self.board, 8) {
-                                let _ = self.board.try_move(mv);
-                            }
+            Key::Char(c) if self.board().status() == BoardStatus::OnGoing => {
+                if let Ok(column) = Column::from_str(&c.to_string()) {
+                    if self.board.try_move(column).is_ok() {
+                        if let Some(mv) = ai::next_move(&self.board, 10) {
+                            let _ = self.board.try_move(mv);
                         }
                     }
                 }
