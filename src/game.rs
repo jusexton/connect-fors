@@ -2,8 +2,9 @@ use std::{fmt, str::FromStr};
 
 use thiserror::Error;
 
-const TOP: u64 = 0b0000001_0000001_0000001_0000001_0000001_0000001_0000001;
-
+const TOP: [u8; 7] = [6, 13, 20, 27, 34, 41, 48];
+const TOP_BITBOARD: u64 = 0b1000000_1000000_1000000_1000000_1000000_1000000_1000000;
+ 
 #[derive(Error, Debug, PartialEq)]
 pub enum MoveError {
     #[error("Column did not have available space.")]
@@ -47,7 +48,11 @@ impl Column {
         ]
     }
 
-    pub const fn to_u64(self) -> u64 {
+    pub const fn to_index(self) -> usize {
+        self.to_u8() as usize - 1
+    }
+
+    pub const fn to_u8(self) -> u8 {
         match self {
             Column::One => 1,
             Column::Two => 2,
@@ -84,6 +89,15 @@ pub enum Player {
     Two,
 }
 
+impl Player {
+    const fn from_move_count(count: u8) -> Self {
+        match count & 1 {
+            0 => Player::One,
+            _ => Player::Two,
+        }
+    }
+}
+
 #[derive(Default, Debug, PartialEq, Copy, Clone)]
 pub enum BoardStatus {
     Winner(Player),
@@ -92,70 +106,60 @@ pub enum BoardStatus {
     OnGoing,
 }
 
-#[derive(Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct ConnectFourBoard {
     player_one_bitboard: u64,
     player_two_bitboard: u64,
-    turn: Player,
-    status: BoardStatus,
+    move_count: u8,
+    heights: [u8; 7],
+    history: Vec<Column>,
 }
 
 impl ConnectFourBoard {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn slots(&self) -> BoardSlots {
         BoardSlots::new(self)
     }
 
     pub fn try_move(&mut self, column: Column) -> Result<u64, MoveError> {
-        if self.status != BoardStatus::OnGoing {
+        if self.status() != BoardStatus::OnGoing {
             return Err(MoveError::ConcludedGame);
         }
 
-        let next_position = self.next_position(column)?;
-        match self.turn {
+        if !self.is_playable(column) {
+            return Err(MoveError::FullColumn);
+        }
+
+        let idx = column.to_index();
+        let next_position = 1 << self.heights[idx];
+        match self.current_player() {
             Player::One => self.player_one_bitboard ^= next_position,
             Player::Two => self.player_two_bitboard ^= next_position,
         };
-        self.turn = self.next_turn();
-        self.status = self.calculate_board_status();
+
+        self.move_count += 1;
+        self.heights[idx] += 1;
+        self.history.push(column);
 
         Ok(next_position)
     }
 
-    fn next_position(&self, column: Column) -> Result<u64, MoveError> {
-        let offset = 7 * (column.to_u64() - 1);
-        let mut mask = 0b1000000_0000000_0000000_0000000_0000000_0000000_0000000u64 >> offset;
-        let board = !(self.player_one_bitboard | self.player_two_bitboard);
-        for _ in 0..6 {
-            if board & mask != 0 {
-                return Ok(mask);
-            }
-            mask >>= 1;
+    pub fn pop_move(&mut self) {
+        if let Some(column) = self.history.pop() {
+            let idx = column.to_index();
+            self.move_count -= 1;
+            self.heights[idx] -= 1;
+
+            let old_position = 1 << self.heights[idx];
+            match self.current_player() {
+                Player::One => self.player_one_bitboard ^= old_position,
+                Player::Two => self.player_two_bitboard ^= old_position,
+            };
         }
-        Err(MoveError::FullColumn)
     }
 
-    fn calculate_board_status(&self) -> BoardStatus {
-        if has_winner(self.player_one_bitboard) {
-            return BoardStatus::Winner(Player::One);
-        }
-        if has_winner(self.player_two_bitboard) {
-            return BoardStatus::Winner(Player::Two);
-        }
-        if (self.player_one_bitboard | self.player_two_bitboard).count_ones() == 42 {
-            return BoardStatus::Draw;
-        }
-        BoardStatus::OnGoing
-    }
-
-    pub fn next_turn(&self) -> Player {
-        match self.turn {
-            Player::One => Player::Two,
-            Player::Two => Player::One,
-        }
+    pub fn is_playable(&self, column: Column) -> bool {
+        let idx = column.to_index();
+        self.heights[idx] < TOP[idx]
     }
 
     pub fn player_one_bitboard(&self) -> u64 {
@@ -166,12 +170,33 @@ impl ConnectFourBoard {
         self.player_two_bitboard
     }
 
-    pub fn turn(&self) -> Player {
-        self.turn
+    pub fn current_player(&self) -> Player {
+        Player::from_move_count(self.move_count)
     }
 
     pub fn status(&self) -> BoardStatus {
-        self.status
+        if has_winner(self.player_one_bitboard) {
+            return BoardStatus::Winner(Player::One);
+        }
+        if has_winner(self.player_two_bitboard) {
+            return BoardStatus::Winner(Player::Two);
+        }
+        if self.move_count == 42 {
+            return BoardStatus::Draw;
+        }
+        BoardStatus::OnGoing
+    }
+}
+
+impl Default for ConnectFourBoard {
+    fn default() -> Self {
+        Self {
+            player_one_bitboard: 0,
+            player_two_bitboard: 0,
+            move_count: 0,
+            heights: [0, 7, 14, 21, 28, 35, 42],
+            history: Vec::with_capacity(42),
+        }
     }
 }
 
@@ -200,10 +225,7 @@ pub struct BoardSlots<'a> {
 
 impl<'a> BoardSlots<'a> {
     pub fn new(board: &'a ConnectFourBoard) -> Self {
-        Self {
-            cursor: 0b1000000_0000000_0000000_0000000_0000000_0000000_0000000,
-            board,
-        }
+        Self { cursor: 0, board }
     }
 }
 
@@ -211,24 +233,23 @@ impl Iterator for BoardSlots<'_> {
     type Item = Slot;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor & TOP != 0 {
-            self.cursor >>= 1;
+        if (1 << self.cursor) & TOP_BITBOARD != 0 {
+            self.cursor += 1;
         }
 
-        match self.cursor {
-            0 => None,
-            _ => {
-                let slot = if self.board.player_one_bitboard() & self.cursor != 0 {
-                    Slot::Occupied(Player::One)
-                } else if self.board.player_two_bitboard() & self.cursor != 0 {
-                    Slot::Occupied(Player::Two)
-                } else {
-                    Slot::Vacant
-                };
-                self.cursor >>= 1;
-                Some(slot)
-            }
+        if self.cursor >= 48 {
+            return None;
         }
+
+        let slot = if self.board.player_one_bitboard() & (1 << self.cursor) != 0 {
+            Slot::Occupied(Player::One)
+        } else if self.board.player_two_bitboard() & (1 << self.cursor) != 0 {
+            Slot::Occupied(Player::Two)
+        } else {
+            Slot::Vacant
+        };
+        self.cursor += 1;
+        Some(slot)
     }
 }
 
@@ -240,39 +261,57 @@ mod tests {
 
     #[test]
     fn default_board() {
-        let board = ConnectFourBoard::new();
+        let board = ConnectFourBoard::default();
 
         assert_eq!(0, board.player_one_bitboard());
         assert_eq!(0, board.player_two_bitboard());
-        assert_eq!(Player::One, board.turn());
+        assert_eq!(Player::One, board.current_player());
         assert_eq!(BoardStatus::OnGoing, board.status());
     }
 
     #[test]
-    fn places_new_pieces_in_correct_position() {
-        let mut board = ConnectFourBoard::new();
-        for i in 0..6 {
-            let next_pos = board.try_move(Column::One).unwrap();
-            assert_eq!(
-                0b1000000_0000000_0000000_0000000_0000000_0000000_0000000 >> i,
-                next_pos
-            );
-        }
+    fn places_piece_in_column_one() {
+        let mut board = ConnectFourBoard::default();
+        let next_pos = board.try_move(Column::One).unwrap();
+        assert_eq!(
+            0b000000_0000000_0000000_0000000_0000000_0000000_0000001,
+            next_pos
+        );
+    }
+
+    #[test]
+    fn places_piece_in_column_two() {
+        let mut board = ConnectFourBoard::default();
+        let next_pos = board.try_move(Column::Two).unwrap();
+        assert_eq!(
+            0b0000000_0000000_0000000_0000000_0000000_0000001_0000000,
+            next_pos
+        );
+    }
+
+    #[test]
+    fn places_piece_in_column_three() {
+        let mut board = ConnectFourBoard::default();
+        let next_pos = board.try_move(Column::Three).unwrap();
+        assert_eq!(
+            0b0000000_0000000_0000000_0000000_0000001_0000000_0000000,
+            next_pos
+        );
     }
 
     #[test]
     fn error_when_column_is_full() {
-        let mut board = ConnectFourBoard {
-            player_one_bitboard: 0b1111110_0000000_0000000_0000000_0000000_0000000_0000000,
-            ..Default::default()
-        };
+        let mut board = ConnectFourBoard::default();
+        for _ in 0..6 {
+            let _ = board.try_move(Column::One);
+        }
         assert_eq!(Err(MoveError::FullColumn), board.try_move(Column::One));
     }
 
     #[test]
     fn error_moving_on_concluded_board() {
         let mut board = ConnectFourBoard {
-            status: BoardStatus::Draw,
+            player_one_bitboard: 0b0000000_0000000_0000000_0000000_0000000_0000000_0001111,
             ..Default::default()
         };
         assert_eq!(Err(MoveError::ConcludedGame), board.try_move(Column::One));
@@ -280,7 +319,7 @@ mod tests {
 
     #[test]
     fn players_alternate_between_moves() {
-        let mut board = ConnectFourBoard::new();
+        let mut board = ConnectFourBoard::default();
         assert_eq!(0, board.player_one_bitboard());
         assert_eq!(0, board.player_two_bitboard());
 
@@ -291,13 +330,6 @@ mod tests {
         let _ = board.try_move(Column::One);
         assert_ne!(0, board.player_one_bitboard());
         assert_ne!(0, board.player_two_bitboard());
-    }
-
-    #[test]
-    fn next_player_turn_calculated() {
-        let board = ConnectFourBoard::new();
-        assert_eq!(Player::One, board.turn());
-        assert_eq!(Player::Two, board.next_turn());
     }
 
     #[test]
@@ -329,8 +361,8 @@ mod tests {
     #[test]
     fn reads_board_slots() {
         let board = ConnectFourBoard {
-            player_one_bitboard: 0b1111110_0000000_0000010_0000000_0000010_0000000_0000010,
-            player_two_bitboard: 0b0000000_1111100_0000000_0000010_0000000_0000010_0000000,
+            player_one_bitboard: 0b0100000_0000000_0100000_0000000_0100000_0000000_0111111,
+            player_two_bitboard: 0b0000000_0100000_0000000_0100000_0000000_0011111_0000000,
             ..Default::default()
         };
 

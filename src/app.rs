@@ -1,3 +1,4 @@
+use core::panic;
 use std::str::FromStr;
 
 use ratatui::{DefaultTerminal, Frame};
@@ -74,6 +75,8 @@ impl App {
                     if self.board.try_move(column).is_ok() {
                         if let Some(mv) = ai::next_move(&self.board, 10) {
                             let _ = self.board.try_move(mv);
+                        } else {
+                            panic!("AI was not able to find a move.")
                         }
                     }
                 }
