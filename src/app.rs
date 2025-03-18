@@ -1,5 +1,4 @@
 use core::panic;
-use std::str::FromStr;
 
 use ratatui::{DefaultTerminal, Frame};
 
@@ -9,6 +8,12 @@ use crate::{
     game::{BoardStatus, Column, ConnectFourBoard},
     ui,
 };
+
+pub enum CursorMovement {
+    Left,
+    Right,
+    Exact(Column),
+}
 
 pub enum Page {
     Home,
@@ -20,6 +25,7 @@ pub struct App {
     running: bool,
     current_page: Page,
     board: ConnectFourBoard,
+    board_cursor: Option<Column>,
 }
 
 impl App {
@@ -28,6 +34,7 @@ impl App {
             running: true,
             current_page: Page::Home,
             board: ConnectFourBoard::default(),
+            board_cursor: None,
         }
     }
 
@@ -54,10 +61,12 @@ impl App {
         match key {
             Key::Char('1') => {
                 self.board = ConnectFourBoard::default();
+                self.board_cursor = Some(Column::Four);
                 self.current_page = Page::SinglePlayer;
             }
             Key::Char('2') => {
                 self.board = ConnectFourBoard::default();
+                self.board_cursor = Some(Column::Four);
                 self.current_page = Page::MultiPlayer;
             }
             Key::Char('q') => self.running = false,
@@ -65,36 +74,67 @@ impl App {
         }
     }
 
-    fn handle_singleplayer_key_press(&mut self, key: Key) {
+    fn handle_game_key_press<F>(&mut self, key: Key, mut on_turn: F)
+    where
+        F: FnMut(&mut ConnectFourBoard, Column),
+    {
         match key {
             Key::Char('q') => {
                 self.current_page = Page::Home;
             }
-            Key::Char(c) if self.board().status() == BoardStatus::OnGoing => {
-                if let Ok(column) = Column::from_str(&c.to_string()) {
-                    if self.board.try_move(column).is_ok() {
-                        if let Some(mv) = ai::next_move(&self.board, 10) {
-                            let _ = self.board.try_move(mv);
-                        } else {
-                            panic!("AI was not able to find a move.")
-                        }
-                    }
-                }
+            Key::Left => self.update_cursor(CursorMovement::Left),
+            Key::Right => self.update_cursor(CursorMovement::Right),
+            Key::Char('1') => self.update_cursor(CursorMovement::Exact(Column::One)),
+            Key::Char('2') => self.update_cursor(CursorMovement::Exact(Column::Two)),
+            Key::Char('3') => self.update_cursor(CursorMovement::Exact(Column::Three)),
+            Key::Char('4') => self.update_cursor(CursorMovement::Exact(Column::Four)),
+            Key::Char('5') => self.update_cursor(CursorMovement::Exact(Column::Five)),
+            Key::Char('6') => self.update_cursor(CursorMovement::Exact(Column::Six)),
+            Key::Char('7') => self.update_cursor(CursorMovement::Exact(Column::Seven)),
+            Key::Enter if self.board().status() == BoardStatus::OnGoing => {
+                on_turn(&mut self.board, self.board_cursor.unwrap())
             }
             _ => {}
         }
     }
 
-    fn handle_multiplayer_key_press(&mut self, key: Key) {
-        match key {
-            Key::Char('q') => {
-                self.current_page = Page::Home;
+    fn handle_singleplayer_key_press(&mut self, key: Key) {
+        self.handle_game_key_press(key, |board, cursor| {
+            if board.try_move(cursor).is_ok() {
+                if let Some(mv) = ai::next_move(board, 10) {
+                    let _ = board.try_move(mv);
+                } else {
+                    panic!("AI was not able to find a move.")
+                }
             }
-            Key::Char(c) => {
-                if self.board().status() == BoardStatus::OnGoing {
-                    if let Ok(column) = Column::from_str(&c.to_string()) {
-                        let _ = self.board.try_move(column);
+        });
+    }
+
+    fn handle_multiplayer_key_press(&mut self, key: Key) {
+        self.handle_game_key_press(key, |board, cursor| {
+            let _ = board.try_move(cursor);
+        });
+    }
+
+    fn update_cursor(&mut self, cursor: CursorMovement) {
+        match cursor {
+            CursorMovement::Left if self.board_cursor.is_some() => {
+                let col = self.board_cursor.unwrap().to_u8();
+                if let Ok(column) = Column::try_from(col - 1) {
+                    self.board_cursor = Some(column);
+                }
+            }
+            CursorMovement::Right if self.board_cursor.is_some() => {
+                let col = self.board_cursor.unwrap().to_u8();
+                if let Ok(column) = Column::try_from(col + 1) {
+                    if self.board.is_playable(column) {
+                        self.board_cursor = Some(column);
                     }
+                }
+            }
+            CursorMovement::Exact(column) => {
+                if self.board.is_playable(column) {
+                    self.board_cursor = Some(column);
                 }
             }
             _ => {}
@@ -110,5 +150,9 @@ impl App {
 
     pub fn board(&self) -> &ConnectFourBoard {
         &self.board
+    }
+
+    pub fn board_cursor(&self) -> Option<Column> {
+        self.board_cursor
     }
 }

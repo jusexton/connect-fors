@@ -4,7 +4,7 @@ use thiserror::Error;
 
 const TOP: [u8; 7] = [6, 13, 20, 27, 34, 41, 48];
 const TOP_BITBOARD: u64 = 0b1000000_1000000_1000000_1000000_1000000_1000000_1000000;
- 
+
 #[derive(Error, Debug, PartialEq)]
 pub enum MoveError {
     #[error("Column did not have available space.")]
@@ -16,7 +16,7 @@ pub enum MoveError {
 
 #[derive(Debug, Error)]
 #[error("Provided value was not a valid column.")]
-pub struct ColumnParseError;
+pub struct ColumnConversionError;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Column {
@@ -65,8 +65,25 @@ impl Column {
     }
 }
 
+impl TryFrom<u8> for Column {
+    type Error = ColumnConversionError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Column::One),
+            2 => Ok(Column::Two),
+            3 => Ok(Column::Three),
+            4 => Ok(Column::Four),
+            5 => Ok(Column::Five),
+            6 => Ok(Column::Six),
+            7 => Ok(Column::Seven),
+            _ => Err(ColumnConversionError),
+        }
+    }
+}
+
 impl FromStr for Column {
-    type Err = ColumnParseError;
+    type Err = ColumnConversionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -77,7 +94,7 @@ impl FromStr for Column {
             "5" => Ok(Column::Five),
             "6" => Ok(Column::Six),
             "7" => Ok(Column::Seven),
-            _ => Err(ColumnParseError),
+            _ => Err(ColumnConversionError),
         }
     }
 }
@@ -168,6 +185,11 @@ impl ConnectFourBoard {
 
     pub fn player_two_bitboard(&self) -> u64 {
         self.player_two_bitboard
+    }
+
+    pub fn column_height(&self, column: Column) -> u8 {
+        let idx = column.to_index();
+        self.heights[idx] % 7
     }
 
     pub fn current_player(&self) -> Player {

@@ -14,7 +14,7 @@ use ratatui::{
 
 use crate::{
     app::App,
-    game::{BoardStatus, ConnectFourBoard, Player, Slot},
+    game::{BoardStatus, Column, ConnectFourBoard, Player, Slot},
 };
 
 use super::util;
@@ -50,7 +50,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .block(Block::bordered().fg(border_color))
         .marker(Marker::Braille)
         .paint(|ctx| {
-            for slot in build_board_slots(app.board()) {
+            for slot in build_board_slots(app.board(), app.board_cursor()) {
                 ctx.draw(&slot);
             }
         })
@@ -90,15 +90,25 @@ fn board_chunk(area: Rect) -> Rect {
     chunks[1]
 }
 
-fn build_board_slots(board: &ConnectFourBoard) -> Vec<Circle> {
+fn build_board_slots(board: &ConnectFourBoard, cursor: Option<Column>) -> Vec<Circle> {
     let mut slots = Vec::with_capacity(42);
     for (idx, slot) in board.slots().enumerate() {
+        let (row, col) = (idx % 6, idx / 6);
+
         let color = match slot {
             Slot::Occupied(player) => get_player_color(player),
-            Slot::Vacant => Color::White,
+            Slot::Vacant => match cursor {
+                Some(column)
+                    if column.to_index() == col
+                        && board.column_height(column) == row as u8
+                        && board.status() == BoardStatus::OnGoing =>
+                {
+                    Color::LightGreen
+                }
+                _ => Color::White,
+            },
         };
 
-        let (row, col) = (idx % 6, idx / 6);
         slots.push(Circle {
             x: (col as f64 * SLOT) + BOARD_PADDING,
             y: (row as f64 * SLOT) + BOARD_PADDING,
